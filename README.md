@@ -1,2 +1,0 @@
-# Tiny-Shell
-shell lab
