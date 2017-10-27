@@ -1,7 +1,7 @@
 /* 
  * tsh - A tiny shell program with job control
  * 
- * <Put your name and login ID here>
+ * Jun Ye, jye1
  */
 #include <assert.h>
 #include <stdio.h>
@@ -214,19 +214,23 @@ eval(char *cmdline)
         _exit(0);
 
     if (tok.builtins == BUILTIN_JOBS){// builtin jobs command
-        listjobs(job_list, output_fd);
+        if (tok.outfile != NULL){
+		if ((output_fd=open(tok.outfile, O_WRONLY))<0)
+			Sio_error("open file error");
+	}		
+	listjobs(job_list, output_fd);
 	return;
     }
-
+	//check for builtin fg and bg commands
     if ((tok.builtins == BUILTIN_BG)|(tok.builtins == BUILTIN_FG) ){  
-	int bg = 0;
+	bg = 0;
 	if (tok.builtins == BUILTIN_BG) 
 		bg =1;
     	if (tok.argc == 1){  //check whetehr there is second argument
 		printf("%s command requires PID or %%jobid argument\n",tok.argv[0]);
 		return;
 	}
-	//else{ //check for correct format
+	//check for correct format
 	if (!isdigit(tok.argv[1][0]) && (tok.argv[1][0] != '%')) { 
 		printf("bg: argument must be a PID or %%jobid\n");
 		return;
@@ -237,14 +241,7 @@ eval(char *cmdline)
 		job = getjobjid(job_list, jid);
 		if (job == NULL)
 			printf("%s: No such job\n", tok.argv[1]);
-		else{  //do bg and fg commande
-			//if(!bg){
-		        //     job->state = FG;
-       			//     Kill(-(job->pid),SIGCONT);
-          		//     printf("test fg pid %d\n", (job->pid));
-          		//     while ((job->state) == FG)
-                	//	sigsuspend(&prev_one);
-			//}
+		else{  //do bg and fg command
 		       if(!bgnfg(bg,job, prev_one))	
 				Sio_error("change bg/fg error");
 		}
@@ -256,25 +253,24 @@ eval(char *cmdline)
 		job = getjobpid(job_list, pid);	
 		if (job == NULL)
 			printf("(%d): No such process\n", pid);
-                else{  //do bg and fg commande
+                else{  //do bg and fg command
                          if(!bgnfg(bg, job, prev_one))
 				Sio_error("change bg/fg error");
                  }			
             	 Sigprocmask(SIG_SETMASK, &prev_one, NULL);  
 	} 
-//	}
 	return;
     }
 
- 
+ 	//check for executable command 
     if (tok.builtins == BUILTIN_NONE){
-        
-        Sigprocmask(SIG_BLOCK, &mask_all, &prev_one);   //block all signals
+        //block signals to prevent race condtion between addjob and delete job
+        Sigprocmask(SIG_BLOCK, &mask_all, &prev_one);   
         if ((pid = Fork()) == 0) { // child process
     	    Signal(SIGTTOU, SIG_DFL);
     	    Signal(SIGTTIN, SIG_DFL);
 	  
-	    if (setpgid(0,0) < 0) { //set child process group id identical as the child pid
+	    if (setpgid(0,0) < 0) { //set child process group id identical as its pid
 		(void) fprintf(stderr, "Error: Setgpid\n");
 	    }
             Sigprocmask(SIG_SETMASK, &mask_empty, NULL);  //unblock signals
@@ -285,7 +281,7 @@ eval(char *cmdline)
  	    }
  	    if (tok.infile!=NULL){
     		int fd = Open(tok.infile, O_RDONLY, 0);
-   		dup2(fd, 0); //map fd to stdin
+   		dup2(fd, 0); //map input file to stdin
     		Close(fd);
 	    } 
 	    if (execve(tok.argv[0], tok.argv, environ)<0){
@@ -296,16 +292,15 @@ eval(char *cmdline)
         }
         //parent proces
         
-      //  job = getjobpid(job_list, pid);
         if (bg == 0){   //foreground job           
-            Sigprocmask(SIG_BLOCK, &mask_all, NULL);   //block all signals
+            Sigprocmask(SIG_BLOCK, &mask_all, NULL);   //block signals
             addjob(job_list, pid, FG, cmdline);
             while (pid == fgpid(job_list))
 	   	sigsuspend(&prev_one);
             Sigprocmask(SIG_SETMASK, &prev_one, NULL);  //unblock signals       
             
         }else{  //background job
-	    Sigprocmask(SIG_BLOCK, &mask_all, NULL);   //block all signals
+	    Sigprocmask(SIG_BLOCK, &mask_all, NULL);   //block signals
             addjob(job_list, pid, BG, cmdline);
             job = getjobpid(job_list, pid);
 	    printf("[%d] (%d)  %s\n",job->jid,job->pid, job->cmdline);
@@ -316,13 +311,14 @@ eval(char *cmdline)
     return;
 }
 
+//do bg and fg builtin command
 int bgnfg(int bg, struct job_t *job,sigset_t prev_one) {
-    if (bg) {
+    if (bg) { //bg command
           job->state = BG;
           Kill(-(job->pid),SIGCONT);
           printf("[%d] (%d)  %s\n",job->jid,job->pid, job->cmdline);
 	  return 1;
-    }else{  //change bg job to fg                 
+    }else{  //fg command                 
 	  job->state = FG;
           Kill(-(job->pid),SIGCONT);
           while ((job->state) == FG)
@@ -500,13 +496,12 @@ sigchld_handler(int sig)
     int status;
     struct job_t *job;
     Sigfillset(&mask_all);
+	//reap reap terminated or stopped child 
     while((pid = waitpid(-1, &status, WUNTRACED|WNOHANG)) > 0){
         Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
         if (WIFEXITED(status)) {  //if exited normally or signaled
-        //	Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
         	if(!deletejob(job_list, pid))
 			Sio_error("delete error in sigchld_handler\n");
-        //	Sigprocmask(SIG_SETMASK, &prev_all, NULL);
 	}
  	else if (WIFSIGNALED(status)) {  //check if it's caused by interrupt signal  
              job = getjobpid(job_list, pid);
@@ -539,7 +534,7 @@ sigint_handler(int sig)
     sigset_t mask_all, prev_all;
  
     Sigfillset(&mask_all);
-    pid_t pid = fgpid(job_list);
+    pid_t pid = fgpid(job_list); //check whether it's fg job
     if (pid) {
     	Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
         Kill(-pid, sig);
@@ -557,10 +552,9 @@ void
 sigtstp_handler(int sig) 
 {
     sigset_t mask_all, prev_all;
-    
     Sigfillset(&mask_all);
     
-    pid_t pid = fgpid(job_list);
+    pid_t pid = fgpid(job_list);  //check whether it's fg job
     if (pid){
     	Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
     	Kill(-pid, sig);
