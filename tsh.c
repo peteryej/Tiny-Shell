@@ -238,7 +238,14 @@ eval(char *cmdline)
 		if (job == NULL)
 			printf("%s: No such job\n", tok.argv[1]);
 		else{  //do bg and fg commande
-		        if (!bgnfg(bg,job, prev_one))	
+			//if(!bg){
+		        //     job->state = FG;
+       			//     Kill(-(job->pid),SIGCONT);
+          		//     printf("test fg pid %d\n", (job->pid));
+          		//     while ((job->state) == FG)
+                	//	sigsuspend(&prev_one);
+			//}
+		       if(!bgnfg(bg,job, prev_one))	
 				Sio_error("change bg/fg error");
 		}
             	Sigprocmask(SIG_SETMASK, &prev_one, NULL);  
@@ -264,6 +271,9 @@ eval(char *cmdline)
         
         Sigprocmask(SIG_BLOCK, &mask_all, &prev_one);   //block all signals
         if ((pid = Fork()) == 0) { // child process
+    	    Signal(SIGTTOU, SIG_DFL);
+    	    Signal(SIGTTIN, SIG_DFL);
+	  
 	    if (setpgid(0,0) < 0) { //set child process group id identical as the child pid
 		(void) fprintf(stderr, "Error: Setgpid\n");
 	    }
@@ -315,8 +325,7 @@ int bgnfg(int bg, struct job_t *job,sigset_t prev_one) {
     }else{  //change bg job to fg                 
 	  job->state = FG;
           Kill(-(job->pid),SIGCONT);
-	  printf("test fg pid \d", job->pid);
-          while ((job->pid) == fgpid(job_list))
+          while ((job->state) == FG)
 		sigsuspend(&prev_one);
 	  return 1;
    }
